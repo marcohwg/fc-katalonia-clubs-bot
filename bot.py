@@ -189,7 +189,7 @@ async def termin(ctx, *, info: str = "Keine Details angegeben"):
     msg = await ctx.send(content=rollen_ping, embed=view.erstelle_embed(), view=view)
     view.main_message = msg
     
-@bot.command 
+@bot.command()
 async def internmatch(ctx):
     view = InternmatchView()
     await ctx.message.delete() # Löscht die eingegebene Nachricht
