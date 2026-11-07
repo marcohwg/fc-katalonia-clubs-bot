@@ -1,7 +1,8 @@
 import os
 import discord
 from discord.ext import commands
-import random 
+import random
+import re
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -196,16 +197,27 @@ ROLLEN_PRO_POSITION = {
 }
 
 
+def rolle_passt(rollen_name: str, kuerzel: str) -> bool:
+    """True, wenn das Kürzel als eigenes Wort im Rollennamen steht.
+    Passt z.B. bei "TW", "🧤 TW", "TW | Torwart" - aber nicht "ZM" in "ZDM" oder "ST" in "Stürmer"."""
+    muster = rf"(?<![A-Za-zÄÖÜäöüß]){re.escape(kuerzel)}(?![A-Za-zÄÖÜäöüß])"
+    return re.search(muster, rollen_name, re.IGNORECASE) is not None
+
+
 def spieler_mit_rolle(guild: discord.Guild, position: str):
-    """Alle Mitglieder (ohne Bots), die eine passende Rolle für die Position haben."""
-    rollen_namen = {r.lower() for r in ROLLEN_PRO_POSITION.get(position, [position])}
+    """Alle Mitglieder (ohne Bots), die eine passende Rolle für die Position haben.
+    Gibt (Spielerliste, Namen der gefundenen Rollen) zurück."""
+    kuerzel = ROLLEN_PRO_POSITION.get(position, [position])
     gefunden = {}
+    rollen = []
     for rolle in guild.roles:
-        if rolle.name.lower() in rollen_namen:
+        if any(rolle_passt(rolle.name, k) for k in kuerzel):
+            rollen.append(rolle.name)
             for member in rolle.members:
                 if not member.bot:
                     gefunden[member.id] = member
-    return sorted(gefunden.values(), key=lambda m: m.display_name.lower())
+    spieler = sorted(gefunden.values(), key=lambda m: m.display_name.lower())
+    return spieler, rollen
 
 
 class FormationSelect(discord.ui.Select):
@@ -281,12 +293,25 @@ class AufstellungBuilder(discord.ui.View):
         for pos, m in zip(self.positionen, self.auswahl):
             zeilen.append(f"✅ {pos}: {m.display_name if m else '*frei*'}")
         zeilen.append(f"\n👉 Wer spielt **{self.aktuelle_position()}**?")
+        if self.hinweis:
+            zeilen.append(self.hinweis)
         return "\n".join(zeilen)
 
     def baue_komponenten(self):
         self.clear_items()
         vergeben = self.vergebene_ids()
-        kandidaten = [m for m in spieler_mit_rolle(self.guild, self.aktuelle_position()) if m.id not in vergeben]
+        position = self.aktuelle_position()
+        spieler, rollen = spieler_mit_rolle(self.guild, position)
+        kandidaten = [m for m in spieler if m.id not in vergeben]
+
+        # Hinweis, falls die Liste leer ist - damit man sieht, woran es liegt
+        if not rollen:
+            gesucht = ", ".join(ROLLEN_PRO_POSITION.get(position, [position]))
+            self.hinweis = f"⚠️ Keine Discord-Rolle gefunden, die **{gesucht}** heißt."
+        elif not spieler:
+            self.hinweis = f"⚠️ Rolle gefunden ({', '.join(rollen)}), aber der Bot sieht keine Mitglieder damit."
+        else:
+            self.hinweis = ""
         self.add_item(SpielerSelect(self, kandidaten))
         self.add_item(AndererSpielerSelect(self))
 
@@ -365,7 +390,14 @@ async def internmatch(ctx):
 async def aufstellung(ctx):
     view = discord.ui.View(timeout=300)
     view.add_item(FormationSelect(ctx.author.id))
-    await ctx.message.delete()
+    try:
+        await ctx.message.delete()
+    except discord.NotFound:
+        # Nachricht schon weg -> ein zweiter Bot-Prozess hat den Befehl schon bearbeitet
+        return
+    # Sicherstellen, dass der Bot alle Mitglieder samt Rollen kennt
+    if not ctx.guild.chunked:
+        await ctx.guild.chunk()
     await ctx.send(f"{ctx.author.mention} Welche Aufstellung spielen wir?", view=view, delete_after=300)
 
 # ZIEHT DAS TOKEN SICHER AUS DEN RENDER-ENVIRONMENT-EINSTELLUNGEN
