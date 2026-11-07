@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 import random
 import re
+from aufstellung_bild import erstelle_bild
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -178,10 +179,32 @@ class InternmatchView(discord.ui.View):
 # Eure Formationen: Name -> Positionen in der Reihenfolge, in der der Bot fragt.
 # Hier einfach anpassen, löschen oder neue hinzufügen (max. 25).
 # (Der Torwart zählt im Namen nicht mit: 3-5-2 heißt 1 TW + 3-5-2.)
+# Jede Position: (Kürzel, x, y) für das Bild. x: 0 = links, 1 = rechts. y: 0 = vorne (Angriff), 1 = eigenes Tor.
 FORMATIONEN = {
-    "3-5-2 (defensiv)": ["TW", "IV", "IV", "IV", "LZDM", "RZDM", "ZOM", "LM", "RM", "ST", "ST"],
-    "3-5-2 (neutral)": ["TW", "IV", "IV", "IV", "LZM", "RZM", "ZOM", "LM", "RM", "ST", "ST"],
-    "4-3-3": ["TW", "LV", "IV", "IV", "RV", "LZM", "RZM", "ZOM", "LF", "RF", "ST"],
+    "3-5-2 (defensiv)": [
+        ("TW", 0.50, 0.91),
+        ("IV", 0.22, 0.75), ("IV", 0.50, 0.78), ("IV", 0.78, 0.75),
+        ("LZDM", 0.33, 0.59), ("RZDM", 0.67, 0.59),
+        ("ZOM", 0.50, 0.42),
+        ("LM", 0.12, 0.45), ("RM", 0.88, 0.45),
+        ("ST", 0.35, 0.20), ("ST", 0.65, 0.20),
+    ],
+    "3-5-2 (neutral)": [
+        ("TW", 0.50, 0.91),
+        ("IV", 0.22, 0.75), ("IV", 0.50, 0.78), ("IV", 0.78, 0.75),
+        ("LZM", 0.32, 0.55), ("RZM", 0.68, 0.55),
+        ("ZOM", 0.50, 0.40),
+        ("LM", 0.12, 0.47), ("RM", 0.88, 0.47),
+        ("ST", 0.35, 0.20), ("ST", 0.65, 0.20),
+    ],
+    "4-3-3": [
+        ("TW", 0.50, 0.91),
+        ("LV", 0.12, 0.70), ("IV", 0.36, 0.76), ("IV", 0.64, 0.76), ("RV", 0.88, 0.70),
+        ("LZM", 0.28, 0.53), ("RZM", 0.72, 0.53),
+        ("ZOM", 0.50, 0.43),
+        ("LF", 0.15, 0.22), ("RF", 0.85, 0.22),
+        ("ST", 0.50, 0.15),
+    ],
 }
 
 # Welche Discord-Rollen (Name, Groß/Klein egal) für eine Position angezeigt werden.
@@ -277,7 +300,7 @@ class AufstellungBuilder(discord.ui.View):
         super().__init__(timeout=900)
         self.autor_id = autor_id
         self.formation = formation
-        self.positionen = FORMATIONEN[formation]
+        self.positionen = [pos for pos, _, _ in FORMATIONEN[formation]]
         self.guild = guild
         self.auswahl = []  # Liste von Member oder None, parallel zu self.positionen
         self.baue_komponenten()
@@ -342,8 +365,22 @@ class AufstellungBuilder(discord.ui.View):
         embed.description = "\n".join(zeilen)
         embed.set_footer(text=f"Aufgestellt von {interaction.user.display_name}")
         pings = " ".join(m.mention for m in self.auswahl if m)
+
+        # Spielfeld-Bild; klappt das nicht, wird nur die Liste gepostet
+        datei = None
+        try:
+            spieler = [
+                (pos, x, y, m.display_name if m else None)
+                for (pos, x, y), m in zip(FORMATIONEN[self.formation], self.auswahl)
+            ]
+            bild = erstelle_bild(f"FC Katalonia · {self.formation}", spieler)
+            datei = discord.File(bild, filename="aufstellung.png")
+            embed.set_image(url="attachment://aufstellung.png")
+        except Exception as fehler:
+            print(f"Aufstellungs-Bild fehlgeschlagen: {fehler}")
+
         await interaction.channel.send(
-            content=pings or None, embed=embed,
+            content=pings or None, embed=embed, file=datei or discord.utils.MISSING,
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
         )
 
