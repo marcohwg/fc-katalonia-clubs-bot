@@ -171,6 +171,169 @@ class InternmatchView(discord.ui.View):
 
 
 # ==========================================
+#  SYSTEM 3: AUFSTELLUNG (!aufstellung)
+# ==========================================
+
+# Eure Formationen: Name -> Positionen in der Reihenfolge, in der der Bot fragt.
+# Hier einfach anpassen, löschen oder neue hinzufügen (max. 25).
+# (Der Torwart zählt im Namen nicht mit: 3-5-2 heißt 1 TW + 3-5-2.)
+FORMATIONEN = {
+    "3-5-2 (defensiv)": ["TW", "IV", "IV", "IV", "LZDM", "RZDM", "ZOM", "LM", "RM", "ST", "ST"],
+    "3-5-2 (neutral)": ["TW", "IV", "IV", "IV", "LZM", "RZM", "ZOM", "LM", "RM", "ST", "ST"],
+    "4-3-3": ["TW", "LV", "IV", "IV", "RV", "LZM", "RZM", "ZOM", "LF", "RF", "ST"],
+}
+
+# Welche Discord-Rollen (Name, Groß/Klein egal) für eine Position angezeigt werden.
+# Steht eine Position hier nicht drin, wird die Rolle mit genau diesem Namen gesucht
+# (z.B. TW -> Rolle "TW", LF -> Rolle "LF").
+ROLLEN_PRO_POSITION = {
+    "LZDM": ["ZDM"],
+    "RZDM": ["ZDM"],
+    "LZM": ["ZM"],
+    "RZM": ["ZM"],
+    "LM": ["LF"],
+    "RM": ["RF"],
+}
+
+
+def spieler_mit_rolle(guild: discord.Guild, position: str):
+    """Alle Mitglieder (ohne Bots), die eine passende Rolle für die Position haben."""
+    rollen_namen = {r.lower() for r in ROLLEN_PRO_POSITION.get(position, [position])}
+    gefunden = {}
+    for rolle in guild.roles:
+        if rolle.name.lower() in rollen_namen:
+            for member in rolle.members:
+                if not member.bot:
+                    gefunden[member.id] = member
+    return sorted(gefunden.values(), key=lambda m: m.display_name.lower())
+
+
+class FormationSelect(discord.ui.Select):
+    def __init__(self, autor_id):
+        options = [discord.SelectOption(label=name, value=name, emoji="📋") for name in FORMATIONEN]
+        super().__init__(placeholder="Welche Aufstellung?", min_values=1, max_values=1, options=options)
+        self.autor_id = autor_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.autor_id:
+            await interaction.response.send_message("❌ Nur wer den Befehl gestartet hat, darf das.", ephemeral=True)
+            return
+        builder = AufstellungBuilder(self.autor_id, self.values[0], interaction.guild)
+        # Weiter geht's in einer Nachricht, die nur der Ersteller sieht
+        await interaction.response.send_message(content=builder.text(), view=builder, ephemeral=True)
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+
+
+class SpielerSelect(discord.ui.Select):
+    def __init__(self, builder, kandidaten):
+        options = [
+            discord.SelectOption(label=m.display_name[:100], value=str(m.id))
+            for m in kandidaten[:24]
+        ]
+        options.append(discord.SelectOption(label="Position frei lassen", value="0", emoji="➖"))
+        super().__init__(
+            placeholder=f"Spieler für {builder.aktuelle_position()} wählen...",
+            min_values=1, max_values=1, options=options,
+        )
+        self.builder = builder
+
+    async def callback(self, interaction: discord.Interaction):
+        wert = int(self.values[0])
+        member = interaction.guild.get_member(wert) if wert else None
+        await self.builder.eintragen(interaction, member)
+
+
+class AndererSpielerSelect(discord.ui.UserSelect):
+    """Fallback: beliebiges Mitglied wählen (z.B. wenn keiner die Rolle hat)."""
+    def __init__(self, builder):
+        super().__init__(placeholder="...oder anderes Mitglied suchen", min_values=1, max_values=1)
+        self.builder = builder
+
+    async def callback(self, interaction: discord.Interaction):
+        member = self.values[0]
+        if member.id in self.builder.vergebene_ids():
+            await interaction.response.send_message("❌ Der Spieler ist schon aufgestellt.", ephemeral=True)
+            return
+        await self.builder.eintragen(interaction, member)
+
+
+class AufstellungBuilder(discord.ui.View):
+    def __init__(self, autor_id, formation, guild):
+        super().__init__(timeout=900)
+        self.autor_id = autor_id
+        self.formation = formation
+        self.positionen = FORMATIONEN[formation]
+        self.guild = guild
+        self.auswahl = []  # Liste von Member oder None, parallel zu self.positionen
+        self.baue_komponenten()
+
+    def aktuelle_position(self):
+        return self.positionen[len(self.auswahl)]
+
+    def vergebene_ids(self):
+        return {m.id for m in self.auswahl if m}
+
+    def text(self):
+        zeilen = [f"📋 **Aufstellung {self.formation}** — Position {len(self.auswahl) + 1}/{len(self.positionen)}"]
+        for pos, m in zip(self.positionen, self.auswahl):
+            zeilen.append(f"✅ {pos}: {m.display_name if m else '*frei*'}")
+        zeilen.append(f"\n👉 Wer spielt **{self.aktuelle_position()}**?")
+        return "\n".join(zeilen)
+
+    def baue_komponenten(self):
+        self.clear_items()
+        vergeben = self.vergebene_ids()
+        kandidaten = [m for m in spieler_mit_rolle(self.guild, self.aktuelle_position()) if m.id not in vergeben]
+        self.add_item(SpielerSelect(self, kandidaten))
+        self.add_item(AndererSpielerSelect(self))
+
+        zurueck = discord.ui.Button(label="Zurück", style=discord.ButtonStyle.secondary, emoji="↩️",
+                                    disabled=not self.auswahl, row=2)
+        zurueck.callback = self.zurueck
+        self.add_item(zurueck)
+
+        abbrechen = discord.ui.Button(label="Abbrechen", style=discord.ButtonStyle.danger, row=2)
+        abbrechen.callback = self.abbrechen
+        self.add_item(abbrechen)
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        return interaction.user.id == self.autor_id
+
+    async def eintragen(self, interaction: discord.Interaction, member):
+        self.auswahl.append(member)
+        if len(self.auswahl) < len(self.positionen):
+            self.baue_komponenten()
+            await interaction.response.edit_message(content=self.text(), view=self)
+            return
+
+        # Aufstellung voll -> posten
+        self.stop()
+        await interaction.response.edit_message(content="✅ Aufstellung wurde gepostet!", view=None)
+        embed = discord.Embed(title=f"📋 FC Katalonia Aufstellung ({self.formation})", color=discord.Color.green())
+        zeilen = [f"**{pos}** — {m.mention if m else '*frei*'}" for pos, m in zip(self.positionen, self.auswahl)]
+        embed.description = "\n".join(zeilen)
+        embed.set_footer(text=f"Aufgestellt von {interaction.user.display_name}")
+        pings = " ".join(m.mention for m in self.auswahl if m)
+        await interaction.channel.send(
+            content=pings or None, embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+        )
+
+    async def zurueck(self, interaction: discord.Interaction):
+        if self.auswahl:
+            self.auswahl.pop()
+        self.baue_komponenten()
+        await interaction.response.edit_message(content=self.text(), view=self)
+
+    async def abbrechen(self, interaction: discord.Interaction):
+        self.stop()
+        await interaction.response.edit_message(content="❌ Aufstellung abgebrochen.", view=None)
+
+
+# ==========================================
 #  COMMANDS
 # ==========================================
 
@@ -197,6 +360,13 @@ async def internmatch(ctx):
     rollen_ping = f"<@&{ROLLEN_ID}>"
     msg = await ctx.send(content=rollen_ping, embed=view.erstelle_embed(), view=view)
     view.main_message = msg
+
+@bot.command()
+async def aufstellung(ctx):
+    view = discord.ui.View(timeout=300)
+    view.add_item(FormationSelect(ctx.author.id))
+    await ctx.message.delete()
+    await ctx.send(f"{ctx.author.mention} Welche Aufstellung spielen wir?", view=view, delete_after=300)
 
 # ZIEHT DAS TOKEN SICHER AUS DEN RENDER-ENVIRONMENT-EINSTELLUNGEN
 TOKEN = os.getenv("DISCORD_TOKEN")
