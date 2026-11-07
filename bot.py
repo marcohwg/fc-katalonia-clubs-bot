@@ -1,3 +1,4 @@
+import asyncio
 import os
 import discord
 from discord.ext import commands
@@ -182,28 +183,28 @@ class InternmatchView(discord.ui.View):
 # Jede Position: (Kürzel, x, y) für das Bild. x: 0 = links, 1 = rechts. y: 0 = vorne (Angriff), 1 = eigenes Tor.
 FORMATIONEN = {
     "3-5-2 (defensiv)": [
-        ("TW", 0.50, 0.91),
-        ("IV", 0.22, 0.75), ("IV", 0.50, 0.78), ("IV", 0.78, 0.75),
-        ("LZDM", 0.33, 0.59), ("RZDM", 0.67, 0.59),
-        ("ZOM", 0.50, 0.42),
-        ("LM", 0.12, 0.45), ("RM", 0.88, 0.45),
-        ("ST", 0.35, 0.20), ("ST", 0.65, 0.20),
+        ("TW", 0.50, 0.925),
+        ("IV", 0.22, 0.755), ("IV", 0.50, 0.755), ("IV", 0.78, 0.755),
+        ("LZDM", 0.33, 0.60), ("RZDM", 0.67, 0.60),
+        ("ZOM", 0.50, 0.44),
+        ("LM", 0.12, 0.47), ("RM", 0.88, 0.47),
+        ("ST", 0.35, 0.22), ("ST", 0.65, 0.22),
     ],
     "3-5-2 (neutral)": [
-        ("TW", 0.50, 0.91),
-        ("IV", 0.22, 0.75), ("IV", 0.50, 0.78), ("IV", 0.78, 0.75),
-        ("LZM", 0.32, 0.55), ("RZM", 0.68, 0.55),
-        ("ZOM", 0.50, 0.40),
-        ("LM", 0.12, 0.47), ("RM", 0.88, 0.47),
-        ("ST", 0.35, 0.20), ("ST", 0.65, 0.20),
+        ("TW", 0.50, 0.925),
+        ("IV", 0.22, 0.755), ("IV", 0.50, 0.755), ("IV", 0.78, 0.755),
+        ("LZM", 0.31, 0.585), ("RZM", 0.69, 0.585),
+        ("ZOM", 0.50, 0.42),
+        ("LM", 0.11, 0.49), ("RM", 0.89, 0.49),
+        ("ST", 0.35, 0.21), ("ST", 0.65, 0.21),
     ],
     "4-3-3": [
-        ("TW", 0.50, 0.91),
-        ("LV", 0.12, 0.70), ("IV", 0.36, 0.76), ("IV", 0.64, 0.76), ("RV", 0.88, 0.70),
-        ("LZM", 0.28, 0.53), ("RZM", 0.72, 0.53),
-        ("ZOM", 0.50, 0.43),
-        ("LF", 0.15, 0.22), ("RF", 0.85, 0.22),
-        ("ST", 0.50, 0.15),
+        ("TW", 0.50, 0.925),
+        ("LV", 0.11, 0.72), ("IV", 0.36, 0.765), ("IV", 0.64, 0.765), ("RV", 0.89, 0.72),
+        ("LZM", 0.28, 0.555), ("RZM", 0.72, 0.555),
+        ("ZOM", 0.50, 0.42),
+        ("LF", 0.15, 0.24), ("RF", 0.85, 0.24),
+        ("ST", 0.50, 0.17),
     ],
 }
 
@@ -373,7 +374,8 @@ class AufstellungBuilder(discord.ui.View):
                 (pos, x, y, m.display_name if m else None)
                 for (pos, x, y), m in zip(FORMATIONEN[self.formation], self.auswahl)
             ]
-            bild = erstelle_bild(f"FC Katalonia · {self.formation}", spieler)
+            # Im Hintergrund zeichnen, damit der Bot währenddessen nicht hängt
+            bild = await asyncio.to_thread(erstelle_bild, self.formation, spieler)
             datei = discord.File(bild, filename="aufstellung.png")
             embed.set_image(url="attachment://aufstellung.png")
         except Exception as fehler:
